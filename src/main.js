@@ -24,12 +24,28 @@ const HTML_HEADERS = {
 
 const pickRandomUserAgent = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 
-const cleanText = (html) => {
+const normalizeText = (value) => {
+    if (!value) return null;
+    const cleaned = String(value).replace(/\s+/g, ' ').trim();
+    return cleaned || null;
+};
+
+const htmlToPlainText = (html) => {
     if (!html) return null;
-    const $ = cheerioLoad(html);
+    const $ = cheerioLoad(`<root>${html}</root>`);
     $('script, style, noscript, iframe').remove();
-    const text = $.root().text().replace(/\s+/g, ' ').trim();
-    return text || null;
+
+    const blocks = [];
+    $('p, li, h1, h2, h3, h4, span, div').each((_, el) => {
+        const text = normalizeText($(el).text());
+        if (text) blocks.push(text);
+    });
+
+    const fallback = normalizeText($.root().text());
+    if (blocks.length) {
+        return blocks.join('\n').replace(/\n{2,}/g, '\n\n');
+    }
+    return fallback;
 };
 
 const normalizeTitle = (rawTitle) => {
@@ -218,14 +234,18 @@ const parseJobPostingDetail = (posting) => {
     const title = normalizeTitle(posting.title);
     const description = typeof posting.description === 'string' ? posting.description : null;
     const descriptionHtml = description || null;
-    const descriptionText = descriptionHtml ? cleanText(descriptionHtml) : null;
+    const descriptionText = descriptionHtml ? htmlToPlainText(descriptionHtml) : null;
     const location = formatLocationFromJobPosting(posting);
     const salary = formatSalaryFromJobPosting(posting);
     const jobType = Array.isArray(posting.employmentType) ? posting.employmentType.join(', ') : posting.employmentType || null;
     const datePosted = posting.datePosted || posting.date || posting.publishedDate || posting.dateposted || null;
-    const skills = Array.isArray(posting.skills)
+    const rawSkills = Array.isArray(posting.skills)
         ? posting.skills.map((skill) => (typeof skill === 'string' ? skill : skill.name || '')).filter(Boolean).join(', ')
         : posting.skills || null;
+    const skills = normalizeText(rawSkills);
+    const specialization =
+        posting.specialization || posting.specialCommitment || posting.category || posting.industry || null;
+    const remote = normalizeText(posting.remote || posting.workLocationType || posting.remoteWork || null);
 
     return {
         title,
@@ -236,6 +256,8 @@ const parseJobPostingDetail = (posting) => {
         job_type: jobType,
         date_posted: datePosted,
         skills,
+        specialization,
+        remote,
     };
 };
 
@@ -267,12 +289,15 @@ const extractDetailFallback = ($) => {
     const titleSelector = $('h1').first().text().trim() || $('[class*="job-title"]').first().text().trim();
     const descSection = $('[class*="description"], [id*="description"], .job-description').first();
     const description_html = descSection.length ? descSection.html() : null;
-    const description_text = description_html ? cleanText(description_html) : null;
+    const description_text = htmlToPlainText(description_html);
     const salaryText = $('[class*="salary"], [class*="pay"], [class*="compensation"]').first().text().trim() || null;
     const locationText = $('[class*="location"]').first().text().trim() || null;
     const jobTypeText = $('[class*="employment"], [class*="job-type"]').first().text().trim() || null;
     const dateMeta = $('meta[name="datePosted"]').attr('content');
     const dateText = dateMeta || $('[class*="date"], [class*="posted"], [class*="publish"]').first().text().trim() || null;
+    const remoteText = $('[class*="remote"], [data-qa*="remote"], .remote').first().text().trim() || null;
+    const specializationText =
+        $('[class*="specialization"], [class*="practice"], [data-qa*="specialization"]').first().text().trim() || null;
 
     return {
         title: normalizeTitle(titleSelector),
@@ -282,6 +307,8 @@ const extractDetailFallback = ($) => {
         location: locationText,
         job_type: jobTypeText,
         date_posted: dateText,
+        remote: normalizeText(remoteText),
+        specialization: normalizeText(specializationText),
     };
 };
 
@@ -295,6 +322,12 @@ const mergeDetailData = (jobMeta, structured, fallback, url) => {
 
     const titleCandidate = jobMeta.title || structured?.title || fallback?.title;
     const descriptionHtml = structured?.description_html || fallback?.description_html || base.description_html || null;
+    const descriptionPlainText =
+        structured?.description_text ||
+        fallback?.description_text ||
+        (descriptionHtml ? htmlToPlainText(descriptionHtml) : null) ||
+        base.description_text ||
+        null;
     const detailItem = {
         ...base,
         title: normalizeTitle(titleCandidate) || titleCandidate || null,
@@ -303,13 +336,10 @@ const mergeDetailData = (jobMeta, structured, fallback, url) => {
         job_type: base.job_type || structured?.job_type || fallback?.job_type || null,
         date_posted: base.date_posted || structured?.date_posted || fallback?.date_posted || null,
         description_html: descriptionHtml,
-        description_text:
-            structured?.description_text ||
-            fallback?.description_text ||
-            (descriptionHtml ? cleanText(descriptionHtml) : null) ||
-            base.description_text ||
-            null,
+        description_text: descriptionPlainText,
         skills: base.skills || structured?.skills || null,
+        remote: base.remote || structured?.remote || fallback?.remote || null,
+        specialization: base.specialization || structured?.specialization || fallback?.specialization || null,
     };
 
     return detailItem;
@@ -319,7 +349,14 @@ const buildJobMetaFromListing = (job) => {
     const url = resolveUrl(job.job_detail_url || job.jobDetailUrl || job.url || job.link || job.job_url);
     const title = normalizeTitle(job.jobtitle || job.title || job.job_title || job.PositionTitle || job.positionTitle);
     const descriptionHtml = job.description || job.description_html || job.summary || job.JobDescription || null;
-    const descriptionText = descriptionHtml ? cleanText(descriptionHtml) : null;
+    const descriptionText = htmlToPlainText(descriptionHtml);
+    const remoteSource = job.remote || job.isRemote || job.remoteDisplay || job.workArrangement || job.work_location_type || null;
+    const remoteNormalized =
+        remoteSource === 'yes'
+            ? 'Remote'
+            : remoteSource === 'No'
+            ? 'On-site'
+            : normalizeText(remoteSource);
     const meta = {
         title,
         company: 'Robert Half',
@@ -331,9 +368,9 @@ const buildJobMetaFromListing = (job) => {
         description_text: descriptionText,
         url,
         source: 'roberthalf.com',
-        skills: job.skills ? cleanText(job.skills) : null,
-        specialization: job.functional_role || job.specialization || job.field || null,
-        remote: job.remote === 'yes' ? 'Remote' : job.remote === 'No' ? 'On-site' : job.remote || null,
+        skills: normalizeText(job.skills),
+        specialization: job.functional_role || job.specialization || job.field || job.industry || null,
+        remote: remoteNormalized,
     };
     meta.job_id = deriveJobId(job, url);
     return meta;
@@ -451,7 +488,30 @@ async function main() {
 
                 const addJobToMap = (raw) => {
                     const normalized = { ...raw };
-                    const jobUrl = resolveUrl(normalized.job_detail_url || normalized.jobDetailUrl || normalized.url || normalized.link || normalized.job_url);
+                    normalized.specialization =
+                        normalized.specialization ||
+                        normalized.functional_role ||
+                        normalized.industry ||
+                        normalized.department ||
+                        normalized.field ||
+                        null;
+                    const remoteSource =
+                        normalized.remote ||
+                        normalized.isRemote ||
+                        normalized.remoteDisplay ||
+                        normalized.workArrangement ||
+                        normalized.work_location_type ||
+                        normalized.workLocationType ||
+                        null;
+                    normalized.remote =
+                        remoteSource === 'yes'
+                            ? 'Remote'
+                            : remoteSource === 'No'
+                            ? 'On-site'
+                            : normalizeText(remoteSource);
+                    const jobUrl = resolveUrl(
+                        normalized.job_detail_url || normalized.jobDetailUrl || normalized.url || normalized.link || normalized.job_url,
+                    );
                     if (!jobUrl) return;
                     const existing = jobsMap.get(jobUrl) || {};
                     jobsMap.set(jobUrl, { ...existing, ...normalized, job_detail_url: jobUrl });
@@ -484,6 +544,8 @@ async function main() {
                         date_posted: posting.datePosted || posting.dateposted,
                         job_type: posting.employmentType,
                         baseSalary: posting.baseSalary,
+                        remote: normalizeText(posting.remote || posting.workLocationType || posting.remoteWork || null),
+                        specialization: posting.specialization || posting.category || posting.industry || null,
                     });
                 });
 
@@ -525,9 +587,44 @@ async function main() {
                     crawlerLog.info(`Scraped job ${saved}/${RESULTS_WANTED}: ${detailRecord.title || jobMeta.title || 'unknown title'}`);
                 } catch (err) {
                     crawlerLog.error(`Failed to scrape detail ${request.url}: ${err.message}`);
+                    if (jobMeta && Object.keys(jobMeta).length) {
+                        await Dataset.pushData(jobMeta);
+                        saved++;
+                        crawlerLog.info(`Saved fallback job metadata for ${request.url}`);
+                    }
                 }
             },
         });
+
+        const detailRequestQueue = [];
+        const dispatchDetailRequests = async () => {
+            if (!detailRequestQueue.length) return;
+            const toProcess = detailRequestQueue.splice(0, detailRequestQueue.length);
+            try {
+                await crawler.run(toProcess);
+            } catch (error) {
+                log.warning(`Detail crawler run failed: ${error.message}`, { requests: toProcess.length });
+                for (const req of toProcess) {
+                    const retries = req.userData?.retries || 0;
+                    if (retries >= 2) {
+                        const fallbackMeta = req.userData?.jobMeta;
+                        if (fallbackMeta && saved < RESULTS_WANTED) {
+                            await Dataset.pushData(fallbackMeta);
+                            saved++;
+                            log.info(`Saved fallback job after retries for ${req.url}`);
+                        }
+                        continue;
+                    }
+                    detailRequestQueue.push({
+                        ...req,
+                        userData: { ...req.userData, retries: retries + 1 },
+                    });
+                }
+                if (detailRequestQueue.length) {
+                    await dispatchDetailRequests();
+                }
+            }
+        };
 
         log.info('Starting Roberthalf Jobs Scraper (API-first mode)');
 
@@ -561,13 +658,7 @@ async function main() {
                 if (jobMeta.job_id) seenJobIds.add(jobMeta.job_id);
 
                 if (collectDetails && jobMeta.url) {
-                    try {
-                        await crawler.run([{ url: jobMeta.url, userData: { label: 'DETAIL', jobMeta } }]);
-                    } catch (error) {
-                        log.warning(`Detail page failed, saving API/HTML data instead for ${jobMeta.url}: ${error.message}`);
-                        await Dataset.pushData(jobMeta);
-                        saved++;
-                    }
+                    detailRequestQueue.push({ url: jobMeta.url, userData: { label: 'DETAIL', jobMeta } });
                 } else {
                     await Dataset.pushData(jobMeta);
                     saved++;
@@ -575,7 +666,12 @@ async function main() {
                 }
             }
 
+            if (collectDetails) {
+                await dispatchDetailRequests();
+            }
+
             log.info(`Completed page ${pageNum}. Total jobs saved: ${saved}/${RESULTS_WANTED}`);
+            if (saved >= RESULTS_WANTED) break;
         }
 
         log.info(`Scraping completed. Total jobs saved: ${saved}`);
