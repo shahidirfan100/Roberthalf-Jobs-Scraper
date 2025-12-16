@@ -30,23 +30,39 @@ const normalizeText = (value) => {
     return cleaned || null;
 };
 
+const normalizeMultilineText = (value) => {
+    if (!value) return null;
+    const lines = String(value)
+        .split('\n')
+        .map((line) => line.replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+    if (!lines.length) return null;
+    return lines.join('\n\n');
+};
+
 const htmlToPlainText = (html) => {
     if (!html) return null;
-    const $ = cheerioLoad(`<root>${html}</root>`);
+    const normalizedHtml = html
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/(p|div|li|section|article|header|footer|h[1-6])>/gi, '\n')
+        .replace(/<\/?(strong|b|em|i)>/gi, '');
+    const $ = cheerioLoad(`<root>${normalizedHtml}</root>`);
     $('script, style, noscript, iframe').remove();
-
-    const blocks = [];
-    $('p, li, h1, h2, h3, h4, span, div').each((_, el) => {
-        const text = normalizeText($(el).text());
-        if (text) blocks.push(text);
-    });
-
-    const fallback = normalizeText($.root().text());
-    if (blocks.length) {
-        return blocks.join('\n').replace(/\n{2,}/g, '\n\n');
-    }
-    return fallback;
+    const text = $.root().text().replace(/\n{3,}/g, '\n\n');
+    return normalizeMultilineText(text);
 };
+
+const JOB_DESCRIPTION_SELECTORS = [
+    '[class*="description"]',
+    '[id*="description"]',
+    '.job-description',
+    '.job-description__content',
+    '.job-description__body',
+    '.job-description-wrapper',
+    '.job-description-container',
+    '[data-qa*="job-description"]',
+    '[data-cy*="job-description"]',
+];
 
 const normalizeTitle = (rawTitle) => {
     if (!rawTitle) return null;
@@ -287,8 +303,14 @@ const parseJobPostingFromPage = ($) => {
 
 const extractDetailFallback = ($) => {
     const titleSelector = $('h1').first().text().trim() || $('[class*="job-title"]').first().text().trim();
-    const descSection = $('[class*="description"], [id*="description"], .job-description').first();
-    const description_html = descSection.length ? descSection.html() : null;
+    const descriptionSections = [];
+    JOB_DESCRIPTION_SELECTORS.forEach((selector) => {
+        $(selector).each((_, section) => {
+            const html = $(section).html();
+            if (html) descriptionSections.push(html.trim());
+        });
+    });
+    const description_html = descriptionSections.length ? descriptionSections.join('\n') : null;
     const description_text = htmlToPlainText(description_html);
     const salaryText = $('[class*="salary"], [class*="pay"], [class*="compensation"]').first().text().trim() || null;
     const locationText = $('[class*="location"]').first().text().trim() || null;
@@ -398,6 +420,7 @@ async function main() {
 
         let saved = 0;
         const seenJobIds = new Set();
+        let apiAvailable = true;
 
         async function fetchJobsFromAPI(pageNumber) {
             const apiUrl = 'https://prd-dr.jps.api.roberthalfonline.com/search';
@@ -629,13 +652,17 @@ async function main() {
         log.info('Starting Roberthalf Jobs Scraper (API-first mode)');
 
         for (let pageNum = 1; pageNum <= MAX_PAGES && saved < RESULTS_WANTED; pageNum++) {
-            let { jobs, totalCount, requiresAuth } = await fetchJobsFromAPI(pageNum);
-
-            if (requiresAuth || !jobs || jobs.length === 0) {
-                log.info(`API unavailable or returned no jobs for page ${pageNum}, using HTML fallback`);
-                const htmlResult = await fetchJobsFromHTML(pageNum);
-                jobs = htmlResult.jobs || [];
-                totalCount = htmlResult.totalCount || 0;
+            const htmlResult = await fetchJobsFromHTML(pageNum);
+            let jobs = htmlResult.jobs || [];
+            let totalCount = htmlResult.totalCount || 0;
+            if ((!jobs || jobs.length === 0) && apiAvailable) {
+                log.info(`HTML listing returned no jobs for page ${pageNum}, trying API fallback`);
+                const apiResult = await fetchJobsFromAPI(pageNum);
+                if (apiResult.requiresAuth) {
+                    apiAvailable = false;
+                }
+                jobs = apiResult.jobs || [];
+                totalCount = apiResult.totalCount || 0;
             }
 
             if (!jobs || jobs.length === 0) {
