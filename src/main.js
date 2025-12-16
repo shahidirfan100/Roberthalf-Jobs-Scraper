@@ -343,7 +343,7 @@ const mergeDetailData = (jobMeta, structured, fallback, url) => {
     };
 
     const titleCandidate = jobMeta.title || structured?.title || fallback?.title;
-    const descriptionHtml = structured?.description_html || fallback?.description_html || base.description_html || null;
+    const descriptionHtml = fallback?.description_html || structured?.description_html || base.description_html || null;
     const descriptionPlainText =
         structured?.description_text ||
         fallback?.description_text ||
