@@ -249,8 +249,7 @@ const parseJobPostingDetail = (posting) => {
     if (!posting) return null;
     const title = normalizeTitle(posting.title);
     const description = typeof posting.description === 'string' ? posting.description : null;
-    const descriptionHtml = description || null;
-    const descriptionText = descriptionHtml ? htmlToPlainText(descriptionHtml) : null;
+    const normalizedDescription = htmlToPlainText(description);
     const location = formatLocationFromJobPosting(posting);
     const salary = formatSalaryFromJobPosting(posting);
     const jobType = Array.isArray(posting.employmentType) ? posting.employmentType.join(', ') : posting.employmentType || null;
@@ -265,8 +264,7 @@ const parseJobPostingDetail = (posting) => {
 
     return {
         title,
-        description_html: descriptionHtml,
-        description_text: descriptionText,
+        description: normalizedDescription,
         location,
         salary,
         job_type: jobType,
@@ -306,12 +304,11 @@ const extractDetailFallback = ($) => {
     const descriptionSections = [];
     JOB_DESCRIPTION_SELECTORS.forEach((selector) => {
         $(selector).each((_, section) => {
-            const html = $(section).html();
-            if (html) descriptionSections.push(html.trim());
+            const text = normalizeText($(section).text());
+            if (text) descriptionSections.push(text);
         });
     });
-    const description_html = descriptionSections.length ? descriptionSections.join('\n') : null;
-    const description_text = htmlToPlainText(description_html);
+    const description = descriptionSections.length ? descriptionSections.join('\n\n') : null;
     const salaryText = $('[class*="salary"], [class*="pay"], [class*="compensation"]').first().text().trim() || null;
     const locationText = $('[class*="location"]').first().text().trim() || null;
     const jobTypeText = $('[class*="employment"], [class*="job-type"]').first().text().trim() || null;
@@ -323,8 +320,7 @@ const extractDetailFallback = ($) => {
 
     return {
         title: normalizeTitle(titleSelector),
-        description_html,
-        description_text,
+        description,
         salary: salaryText,
         location: locationText,
         job_type: jobTypeText,
@@ -343,13 +339,8 @@ const mergeDetailData = (jobMeta, structured, fallback, url) => {
     };
 
     const titleCandidate = jobMeta.title || structured?.title || fallback?.title;
-    const descriptionHtml = fallback?.description_html || structured?.description_html || base.description_html || null;
-    const descriptionPlainText =
-        structured?.description_text ||
-        fallback?.description_text ||
-        (descriptionHtml ? htmlToPlainText(descriptionHtml) : null) ||
-        base.description_text ||
-        null;
+    const description =
+        structured?.description || fallback?.description || base.description || null;
     const detailItem = {
         ...base,
         title: normalizeTitle(titleCandidate) || titleCandidate || null,
@@ -357,8 +348,7 @@ const mergeDetailData = (jobMeta, structured, fallback, url) => {
         salary: base.salary || structured?.salary || fallback?.salary || null,
         job_type: base.job_type || structured?.job_type || fallback?.job_type || null,
         date_posted: base.date_posted || structured?.date_posted || fallback?.date_posted || null,
-        description_html: descriptionHtml,
-        description_text: descriptionPlainText,
+        description,
         skills: base.skills || structured?.skills || null,
         remote: base.remote || structured?.remote || fallback?.remote || null,
         specialization: base.specialization || structured?.specialization || fallback?.specialization || null,
@@ -386,8 +376,7 @@ const buildJobMetaFromListing = (job) => {
         salary: formatSalary(job),
         job_type: job.emptype || job.job_type || job.jobtype || job.employmentType || null,
         date_posted: job.date_posted || job.datePosted || job.postedDate || job.publishedDate || null,
-        description_html: descriptionHtml,
-        description_text: descriptionText,
+        description: descriptionText,
         url,
         source: 'roberthalf.com',
         skills: normalizeText(job.skills),
@@ -676,7 +665,7 @@ async function main() {
                 if (saved >= RESULTS_WANTED) break;
 
                 const jobMeta = buildJobMetaFromListing(job);
-                if (!jobMeta.title && !jobMeta.description_html) {
+                if (!jobMeta.title && !jobMeta.description) {
                     log.debug('Skipping job without title or description', { job });
                     continue;
                 }
