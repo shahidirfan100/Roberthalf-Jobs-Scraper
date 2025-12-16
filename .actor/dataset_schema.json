@@ -1,0 +1,63 @@
+{
+  "actorSpecification": 1,
+  "fields": {},
+  "views": {
+    "overview": {
+      "title": "Overview",
+      "transformation": {
+        "fields": [
+          "title",
+          "company",
+          "location",
+          "salary",
+          "job_type",
+          "remote",
+          "specialization",
+          "date_posted",
+          "url"
+        ]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "title": {
+            "label": "Job Title",
+            "format": "text"
+          },
+          "company": {
+            "label": "Company",
+            "format": "text"
+          },
+          "location": {
+            "label": "Location",
+            "format": "text"
+          },
+          "salary": {
+            "label": "Salary Range",
+            "format": "text"
+          },
+          "job_type": {
+            "label": "Employment Type",
+            "format": "text"
+          },
+          "remote": {
+            "label": "Remote",
+            "format": "text"
+          },
+          "specialization": {
+            "label": "Specialization",
+            "format": "text"
+          },
+          "date_posted": {
+            "label": "Date Posted",
+            "format": "text"
+          },
+          "url": {
+            "label": "Job URL",
+            "format": "link"
+          }
+        }
+      }
+    }
+  }
+}
